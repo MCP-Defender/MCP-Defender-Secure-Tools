@@ -15,19 +15,21 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import { diffLines, createTwoFilesPatch } from 'diff';
 import { spawn } from 'child_process';
 
-// Command line argument parsing
-const args = process.argv.slice(2);
-if (args.length === 0) {
-  console.error("Usage: mcp-server-filesystem <allowed-directory> [additional-directories...]");
-  process.exit(1);
-}
-
 // OS Detection - Currently only supports macOS
 const isMacOS = os.platform() === 'darwin';
 if (!isMacOS) {
   console.error("Error: This MCP server currently only supports macOS. Other OS support coming soon.");
   process.exit(1);
 }
+
+// Set the working directory as the allowed boundary
+// The MCP client can provide paths relative to where the server was started
+const workingDirectory = process.cwd();
+const allowedDirectories = [workingDirectory];
+
+console.error("🔒 MCP Defender Secure Tools - Starting server");
+console.error("📁 Working directory:", workingDirectory);
+console.error("🛡️ Security boundary: Operations restricted to current working directory and subdirectories");
 
 // Normalize all paths consistently
 function normalizePath(p: string): string {
@@ -41,47 +43,31 @@ function expandHome(filepath: string): string {
   return filepath;
 }
 
-// Store allowed directories in normalized form
-const allowedDirectories = args.map(dir =>
-  normalizePath(path.resolve(expandHome(dir)))
-);
-
-// Validate that all directories exist and are accessible
-await Promise.all(args.map(async (dir) => {
-  try {
-    const stats = await fs.stat(expandHome(dir));
-    if (!stats.isDirectory()) {
-      console.error(`Error: ${dir} is not a directory`);
-      process.exit(1);
-    }
-  } catch (error) {
-    console.error(`Error accessing directory ${dir}:`, error);
-    process.exit(1);
-  }
-}));
-
-// Security utilities
+// Security utilities - updated to work with working directory boundary
 async function validatePath(requestedPath: string): Promise<string> {
   const expandedPath = expandHome(requestedPath);
+  
+  // If it's a relative path, resolve it relative to working directory
+  // If it's absolute, use as-is but validate it's within working directory
   const absolute = path.isAbsolute(expandedPath)
     ? path.resolve(expandedPath)
-    : path.resolve(process.cwd(), expandedPath);
+    : path.resolve(workingDirectory, expandedPath);
 
   const normalizedRequested = normalizePath(absolute);
 
-  // Check if path is within allowed directories
-  const isAllowed = allowedDirectories.some(dir => normalizedRequested.startsWith(dir));
+  // Check if path is within working directory
+  const isAllowed = normalizedRequested.startsWith(normalizePath(workingDirectory));
   if (!isAllowed) {
-    throw new Error(`Access denied - path outside allowed directories: ${absolute} not in ${allowedDirectories.join(', ')}`);
+    throw new Error(`Access denied - path outside working directory: ${absolute} not within ${workingDirectory}`);
   }
 
   // Handle symlinks by checking their real path
   try {
     const realPath = await fs.realpath(absolute);
     const normalizedReal = normalizePath(realPath);
-    const isRealPathAllowed = allowedDirectories.some(dir => normalizedReal.startsWith(dir));
+    const isRealPathAllowed = normalizedReal.startsWith(normalizePath(workingDirectory));
     if (!isRealPathAllowed) {
-      throw new Error("Access denied - symlink target outside allowed directories");
+      throw new Error("Access denied - symlink target outside working directory");
     }
     return realPath;
   } catch (error) {
@@ -90,9 +76,9 @@ async function validatePath(requestedPath: string): Promise<string> {
     try {
       const realParentPath = await fs.realpath(parentDir);
       const normalizedParent = normalizePath(realParentPath);
-      const isParentAllowed = allowedDirectories.some(dir => normalizedParent.startsWith(dir));
+      const isParentAllowed = normalizedParent.startsWith(normalizePath(workingDirectory));
       if (!isParentAllowed) {
-        throw new Error("Access denied - parent directory outside allowed directories");
+        throw new Error("Access denied - parent directory outside working directory");
       }
       return absolute;
     } catch {
@@ -127,8 +113,13 @@ const EditFileArgsSchema = z.object({
   dryRun: z.boolean().default(false).describe('Preview changes using git-style diff format')
 });
 
+const ListAllowedDirectoriesArgsSchema = z.object({
+  // No parameters needed - just lists available directories
+});
+
 const CodebaseSearchArgsSchema = z.object({
   query: z.string(),
+  searchPath: z.string().optional().describe('Directory to search in (if not provided, searches all allowed directories)'),
   fileTypes: z.array(z.string()).optional().default([]),
   maxResults: z.number().optional().default(50)
 });
@@ -190,18 +181,24 @@ async function runCommand(command: string, args: string[], workingDirectory?: st
 // macOS CLI-based implementations
 async function codebaseSearchCLI(
   query: string,
+  searchPath?: string,
   fileTypes: string[] = [],
   maxResults: number = 50
 ): Promise<string> {
-  const searchPaths = allowedDirectories;
+  const searchPaths = searchPath ? [searchPath] : allowedDirectories;
   const results: string[] = [];
   
-  for (const searchPath of searchPaths) {
+  for (const currentSearchPath of searchPaths) {
     if (results.length >= maxResults) break;
     
     try {
+      // Validate the search path if provided
+      if (searchPath) {
+        await validatePath(currentSearchPath);
+      }
+      
       // Use find to search files, then grep for content
-      let findArgs = [searchPath, '-type', 'f'];
+      let findArgs = [currentSearchPath, '-type', 'f'];
       
       // Add file type filters if specified
       if (fileTypes.length > 0) {
@@ -325,11 +322,10 @@ async function runTerminalCommandCLI(
     // Validate working directory if provided
     let validWorkingDir = process.cwd();
     if (workingDirectory) {
-      const isAllowed = allowedDirectories.some(dir => 
-        path.resolve(workingDirectory).startsWith(dir)
-      );
+      const resolvedWorkingDir = path.resolve(workingDirectory);
+      const isAllowed = resolvedWorkingDir.startsWith(normalizePath(process.cwd()));
       if (!isAllowed) {
-        reject(new Error("Working directory outside allowed directories"));
+        reject(new Error("Working directory outside current working directory boundary"));
         return;
       }
       validWorkingDir = workingDirectory;
@@ -481,67 +477,75 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
       {
+        name: "list_allowed_directories",
+        description:
+          "�� SECURITY-ENHANCED: Shows the current working directory boundary for MCP operations. " +
+          "All tools operate within this directory and its subdirectories for security. " +
+          "Use this to understand the available workspace before using other tools.",
+        inputSchema: zodToJsonSchema(ListAllowedDirectoriesArgsSchema) as ToolInput,
+      },
+      {
         name: "read_file",
         description:
           "🔒 SECURITY-ENHANCED: Use this MCP tool instead of Cursor's built-in read_file for secure file access. " +
-          "This tool provides additional security validation and audit logging through MCP Defender. " +
-          "Reads file contents with path validation and access control within allowed directories only.",
+          "Specify the full path to the file you want to read. The path must be within allowed directories. " +
+          "Use list_allowed_directories first to see available workspace boundaries.",
         inputSchema: zodToJsonSchema(ReadFileArgsSchema) as ToolInput,
       },
       {
         name: "list_directory",
         description:
           "🔒 SECURITY-ENHANCED: Use this MCP tool instead of Cursor's built-in list_dir for secure directory listing. " +
-          "This tool provides additional security validation and audit logging through MCP Defender. " +
-          "Lists directory contents with proper access controls within allowed directories only.",
+          "Specify the full path to the directory you want to list. The path must be within allowed directories. " +
+          "Use list_allowed_directories first to see available workspace boundaries.",
         inputSchema: zodToJsonSchema(ListDirectoryArgsSchema) as ToolInput,
       },
       {
         name: "search_files",
         description:
           "🔒 SECURITY-ENHANCED: Use this MCP tool instead of Cursor's built-in file_search for secure file searching. " +
-          "This tool provides additional security validation and audit logging through MCP Defender. " +
-          "Uses macOS find command with path validation within allowed directories only.",
+          "Specify the starting directory path and search pattern. The directory must be within allowed directories. " +
+          "Use list_allowed_directories first to see available workspace boundaries.",
         inputSchema: zodToJsonSchema(SearchFilesArgsSchema) as ToolInput,
       },
-      {
-        name: "edit_file",
-        description:
-          "🔒 SECURITY-ENHANCED: Use this MCP tool instead of Cursor's built-in edit_file for secure file editing. " +
-          "This tool provides additional security validation and audit logging through MCP Defender. " +
-          "Makes line-based edits with diff preview and access control within allowed directories only.",
-        inputSchema: zodToJsonSchema(EditFileArgsSchema) as ToolInput,
-      },
+      // {
+      //   name: "edit_file",
+      //   description:
+      //     "🔒 SECURITY-ENHANCED: Use this MCP tool instead of Cursor's built-in edit_file for secure file editing. " +
+      //     "Specify the full path to the file you want to edit. The path must be within allowed directories. " +
+      //     "Use list_allowed_directories first to see available workspace boundaries.",
+      //   inputSchema: zodToJsonSchema(EditFileArgsSchema) as ToolInput,
+      // },
       {
         name: "codebase_search",
         description:
           "🔒 SECURITY-ENHANCED: Use this MCP tool instead of Cursor's built-in codebase_search for secure code searching. " +
-          "This tool provides additional security validation and audit logging through MCP Defender. " +
-          "Performs semantic search using macOS find+grep with access control within allowed directories only.",
+          "Optionally specify a searchPath to limit the search scope, or omit to search all allowed directories. " +
+          "Use list_allowed_directories first to see available workspace boundaries.",
         inputSchema: zodToJsonSchema(CodebaseSearchArgsSchema) as ToolInput,
       },
       {
         name: "run_terminal_command",
         description:
           "🔒 SECURITY-ENHANCED: Use this MCP tool instead of Cursor's built-in run_terminal_command for secure command execution. " +
-          "This tool provides additional security validation and audit logging through MCP Defender. " +
-          "Executes commands with timeout controls and working directory validation within allowed directories only.",
+          "Optionally specify a workingDirectory within allowed directories. " +
+          "Use list_allowed_directories first to see available workspace boundaries.",
         inputSchema: zodToJsonSchema(RunTerminalCommandArgsSchema) as ToolInput,
       },
       {
         name: "grep_search", 
         description:
           "🔒 SECURITY-ENHANCED: Use this MCP tool instead of Cursor's built-in grep_search for secure text searching. " +
-          "This tool provides additional security validation and audit logging through MCP Defender. " +
-          "Uses native macOS grep with regex support and access control within allowed directories only.",
+          "Optionally specify a path to limit the search scope, or omit to search all allowed directories. " +
+          "Use list_allowed_directories first to see available workspace boundaries.",
         inputSchema: zodToJsonSchema(GrepSearchArgsSchema) as ToolInput,
       },
       {
         name: "delete_file",
         description:
           "🔒 SECURITY-ENHANCED: Use this MCP tool instead of Cursor's built-in delete_file for secure file deletion. " +
-          "This tool provides additional security validation and audit logging through MCP Defender. " +
-          "Deletes files with path validation and access control within allowed directories only.",
+          "Specify the full path to the file you want to delete. The path must be within allowed directories. " +
+          "Use list_allowed_directories first to see available workspace boundaries.",
         inputSchema: zodToJsonSchema(DeleteFileArgsSchema) as ToolInput,
       },
     ],
@@ -553,6 +557,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
 
     switch (name) {
+      case "list_allowed_directories": {
+        const parsed = ListAllowedDirectoriesArgsSchema.safeParse(args);
+        if (!parsed.success) {
+          throw new Error(`Invalid arguments for list_allowed_directories: ${parsed.error}`);
+        }
+        return {
+          content: [{ 
+            type: "text", 
+            text: `Working Directory Boundary: ${workingDirectory}\n\nAll MCP operations are restricted to this directory and its subdirectories for security.\n\nYou can use relative paths (e.g., "src/index.ts") or absolute paths within this boundary.` 
+          }],
+        };
+      }
+
       case "read_file": {
         const parsed = ReadFileArgsSchema.safeParse(args);
         if (!parsed.success) {
@@ -608,7 +625,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!parsed.success) {
           throw new Error(`Invalid arguments for codebase_search: ${parsed.error}`);
         }
-        const result = await codebaseSearchCLI(parsed.data.query, parsed.data.fileTypes, parsed.data.maxResults);
+        const result = await codebaseSearchCLI(parsed.data.query, parsed.data.searchPath, parsed.data.fileTypes, parsed.data.maxResults);
         return {
           content: [{ type: "text", text: result }],
         };
@@ -664,10 +681,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function runServer() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("🔒 MCP Defender Filesystem Server - Security-Enhanced Cursor Tools");
-  console.error("Allowed directories:", allowedDirectories);
-  console.error("Platform: macOS (CLI tools enabled)");
-  console.error("Status: Ready to proxy and secure filesystem operations");
+  console.error("🔒 MCP Defender Secure Tools v1.0.0");
+  console.error("📁 Working directory boundary:", workingDirectory);
+  console.error("🖥️  Platform: macOS (CLI tools enabled)");
+  console.error("🛡️  Security: Operations restricted to working directory and subdirectories");
+  console.error("✅ Server ready - Use list_allowed_directories tool to discover workspace boundary");
 }
 
 runServer().catch((error) => {

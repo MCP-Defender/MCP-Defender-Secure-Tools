@@ -14,6 +14,24 @@ MCP Defender Secure Tools acts as a secure proxy layer between Cursor IDE and fi
 - **Access Control**: Symlink validation and real path checking
 - **macOS CLI Integration**: Leverages native macOS tools for optimal performance
 
+## Quick Start
+
+1. **Download and Install MCP Defender**
+   
+   Download and install MCP Defender from: https://github.com/MCP-Defender/MCP-Defender
+
+2. **Enable Secure Tools**
+   
+   In MCP Defender, ensure the "Use MCP Defender Secure Tools" toggle is turned **ON**:
+   
+   ![Use Secure Tools Toggle](screenshots/use_secure_tools_toggle.png)
+   
+   This automatically includes MCP Defender's secure tools server in your MCP configuration, providing safer alternatives to standard file, network, and system operations.
+
+3. **Start Using Secure Tools**
+   
+   Once enabled, AI applications like Cursor, Claude, and VS Code will automatically use the security-enhanced versions of tools provided by this server instead of their built-in equivalents.
+
 ## Architecture
 
 This MCP server intercepts and secures the following Cursor tool operations:
@@ -28,41 +46,55 @@ Each tool includes explicit messaging to prioritize the secure MCP version over 
 
 ## Available Tools
 
+### Directory Discovery
+
+#### `list_allowed_directories`
+🔒 **Security-Enhanced**: Shows the current working directory boundary
+- **Input**: No parameters required
+- **Output**: Working directory path and usage information
+- **Usage**: Call this to understand the workspace boundary for all operations
+- **Security**: Provides transparency about server access scope
+
 ### File Operations
 
 #### `read_file`
 🔒 **Security-Enhanced**: Secure file reading with path validation
-- **Input**: `path` (string)
-- **Security**: Path validation, symlink resolution, directory boundary checking
+- **Input**: `path` (string) - Path to file (relative to working directory or absolute within boundary)
+- **Security**: Path validation, symlink resolution, working directory boundary checking
+- **Usage**: Use relative paths (e.g., `src/index.ts`) or absolute paths within the working directory
 
-#### `edit_file` 
+<!-- #### `edit_file` 
 🔒 **Security-Enhanced**: Secure file editing with diff preview
 - **Input**: 
-  - `path` (string): File to edit
+  - `path` (string): Path to file (relative to working directory or absolute within boundary)
   - `edits` (array): Edit operations with oldText/newText pairs
   - `dryRun` (boolean): Preview changes without applying
 - **Security**: Path validation, atomic operations, diff preview for safety
+- **Usage**: Use relative paths (e.g., `src/index.ts`) or absolute paths within the working directory -->
 
 #### `delete_file`
 🔒 **Security-Enhanced**: Secure file deletion
-- **Input**: `path` (string)
+- **Input**: `path` (string) - Path to file (relative to working directory or absolute within boundary)
 - **Security**: Path validation before deletion
+- **Usage**: Use relative paths (e.g., `src/index.ts`) or absolute paths within the working directory
 
 ### Directory Operations
 
 #### `list_directory`
 🔒 **Security-Enhanced**: Secure directory listing  
-- **Input**: `path` (string)
-- **Security**: Directory boundary validation
+- **Input**: `path` (string) - Path to directory (relative to working directory or absolute within boundary)
+- **Security**: Working directory boundary validation
 - **Output**: Formatted list with [DIR]/[FILE] prefixes
+- **Usage**: Use relative paths (e.g., `src`) or absolute paths within the working directory
 
 #### `search_files`
 🔒 **Security-Enhanced**: Secure file search using macOS find
 - **Input**:
-  - `path` (string): Starting directory
+  - `path` (string): Starting directory (relative to working directory or absolute within boundary)
   - `pattern` (string): Search pattern
   - `excludePatterns` (string[]): Patterns to exclude
-- **Security**: Path validation, restricted to allowed directories
+- **Security**: Path validation, restricted to working directory boundary
+- **Usage**: Use relative paths (e.g., `src`) or absolute paths within the working directory
 
 ### Code Search Operations
 
@@ -70,19 +102,22 @@ Each tool includes explicit messaging to prioritize the secure MCP version over 
 🔒 **Security-Enhanced**: Secure semantic code search
 - **Input**:
   - `query` (string): Search query
+  - `searchPath` (string, optional): Directory to search in (relative to working directory, or omit to search entire boundary)
   - `fileTypes` (string[]): File type filters (optional)
   - `maxResults` (number): Result limit (default: 50)
-- **Security**: Uses macOS find+grep with directory restrictions
+- **Security**: Uses macOS find+grep with working directory boundary restrictions
+- **Usage**: Optionally specify searchPath within the working directory boundary
 
 #### `grep_search`
 🔒 **Security-Enhanced**: Secure text search with regex support
 - **Input**:
   - `pattern` (string): Search pattern
-  - `path` (string): Search path (optional)
+  - `path` (string, optional): Search path (relative to working directory, or omit to search entire boundary)
   - `filePattern` (string): File pattern filter (default: "*")
   - `caseSensitive` (boolean): Case sensitivity (default: false)
   - `maxResults` (number): Result limit (default: 100)
-- **Security**: Native macOS grep with access control
+- **Security**: Native macOS grep with working directory boundary control
+- **Usage**: Optionally specify path within the working directory boundary
 
 ### System Operations
 
@@ -90,9 +125,41 @@ Each tool includes explicit messaging to prioritize the secure MCP version over 
 🔒 **Security-Enhanced**: Secure command execution
 - **Input**:
   - `command` (string): Command to execute
-  - `workingDirectory` (string): Working directory (optional)
+  - `workingDirectory` (string, optional): Working directory (relative to boundary or absolute within boundary)
   - `timeout` (number): Timeout in ms (default: 30000)
-- **Security**: Working directory validation, timeout controls, sandboxed execution
+- **Security**: Working directory validation, timeout controls, sandboxed execution within boundary
+- **Usage**: Optionally specify workingDirectory within the working directory boundary
+
+## Recommended Workflow
+
+1. **Start the server in your project directory**: The working directory becomes the security boundary
+2. **Discover the boundary**: Call `list_allowed_directories` to confirm the workspace boundary  
+3. **Use relative or absolute paths**: Specify paths within the working directory boundary
+4. **Scope searches appropriately**: Use optional path parameters in search tools to limit scope when needed
+
+### Example Usage Pattern
+
+```javascript
+// 1. First, confirm the working directory boundary
+await mcpClient.callTool("list_allowed_directories", {});
+// Returns: Working Directory Boundary: /Users/username/Projects/my-app
+
+// 2. Use relative paths from the working directory
+await mcpClient.callTool("list_directory", {
+  path: "src"  // Relative to working directory
+});
+
+// 3. Or use absolute paths within the boundary
+await mcpClient.callTool("read_file", {
+  path: "/Users/username/Projects/my-app/src/index.ts"
+});
+
+// 4. Search within the project
+await mcpClient.callTool("codebase_search", {
+  query: "function handleAuth",
+  searchPath: "src"  // Relative path within boundary
+});
+```
 
 ## Platform Support
 
@@ -106,8 +173,12 @@ Each tool includes explicit messaging to prioritize the secure MCP version over 
 
 ### NPX Installation
 ```bash
-npx @mcpdefender/mcp-defender-secure-tools /path/to/allowed/directory [additional/directories...]
+# Start the server from your project directory
+cd /path/to/your/project
+npx @mcpdefender/mcp-defender-secure-tools
 ```
+
+The server uses the current working directory as the security boundary - all operations are restricted to this directory and its subdirectories.
 
 ### Usage with Cursor/Claude Desktop
 
@@ -120,10 +191,9 @@ Add to your MCP configuration:
       "command": "npx",
       "args": [
         "-y",
-        "@mcpdefender/mcp-defender-secure-tools",
-        "/Users/username/Projects",
-        "/Users/username/Documents/Code"
-      ]
+        "@mcpdefender/mcp-defender-secure-tools"
+      ],
+      "cwd": "/Users/username/Projects/my-project"
     }
   }
 }
@@ -131,19 +201,20 @@ Add to your MCP configuration:
 
 ### Directory Security
 
-The server requires explicit directory arguments for security:
+The server automatically uses the working directory where it's started as the security boundary:
 
 ```bash
-# Allow access to specific directories only
-npx @mcpdefender/mcp-defender-secure-tools \
-  ~/Projects \
-  ~/Documents/Code \
-  ~/workspace/current-project
+# Start from your project root
+cd ~/Projects/my-app
+npx @mcpdefender/mcp-defender-secure-tools
+
+# All operations will be restricted to ~/Projects/my-app and subdirectories
 ```
 
 **Security Model**:
-- Only operations within specified directories are allowed
-- Symlinks are resolved and validated against allowed paths
+- Operations restricted to the working directory and its subdirectories
+- Supports both relative paths (`src/index.ts`) and absolute paths within the boundary
+- Symlinks are resolved and validated against the working directory boundary
 - Parent directory validation for new file creation
 - Real path checking prevents directory traversal attacks
 
