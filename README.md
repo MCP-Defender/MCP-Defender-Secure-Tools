@@ -46,20 +46,14 @@ Each tool includes explicit messaging to prioritize the secure MCP version over 
 
 ## Available Tools
 
-### Directory Discovery
 
-#### `list_allowed_directories`
-🔒 **Security-Enhanced**: Shows the current working directory boundary
-- **Input**: No parameters required
-- **Output**: Working directory path and usage information
-- **Usage**: Call this to understand the workspace boundary for all operations
-- **Security**: Provides transparency about server access scope
 
 ### File Operations
 
 #### `read_file`
 🔒 **Security-Enhanced**: Secure file reading with path validation
-- **Input**: `path` (string) - Path to file (relative to working directory or absolute within boundary)
+- **Input**: 
+  - `path` (string) - Path to file (relative to working directory or absolute within boundary)
 - **Security**: Path validation, symlink resolution, working directory boundary checking
 - **Usage**: Use relative paths (e.g., `src/index.ts`) or absolute paths within the working directory
 
@@ -74,7 +68,8 @@ Each tool includes explicit messaging to prioritize the secure MCP version over 
 
 #### `delete_file`
 🔒 **Security-Enhanced**: Secure file deletion
-- **Input**: `path` (string) - Path to file (relative to working directory or absolute within boundary)
+- **Input**: 
+  - `path` (string) - Path to file (relative to working directory or absolute within boundary)
 - **Security**: Path validation before deletion
 - **Usage**: Use relative paths (e.g., `src/index.ts`) or absolute paths within the working directory
 
@@ -82,7 +77,8 @@ Each tool includes explicit messaging to prioritize the secure MCP version over 
 
 #### `list_directory`
 🔒 **Security-Enhanced**: Secure directory listing  
-- **Input**: `path` (string) - Path to directory (relative to working directory or absolute within boundary)
+- **Input**: 
+  - `path` (string) - Path to directory (relative to working directory or absolute within boundary)
 - **Security**: Working directory boundary validation
 - **Output**: Formatted list with [DIR]/[FILE] prefixes
 - **Usage**: Use relative paths (e.g., `src`) or absolute paths within the working directory
@@ -133,31 +129,31 @@ Each tool includes explicit messaging to prioritize the secure MCP version over 
 ## Recommended Workflow
 
 1. **Start the server in your project directory**: The working directory becomes the security boundary
-2. **Discover the boundary**: Call `list_allowed_directories` to confirm the workspace boundary  
-3. **Use relative or absolute paths**: Specify paths within the working directory boundary
-4. **Scope searches appropriately**: Use optional path parameters in search tools to limit scope when needed
+2. **Use relative or absolute paths**: Specify paths within the working directory boundary
+3. **Scope searches appropriately**: Use optional path parameters in search tools to limit scope when needed
 
 ### Example Usage Pattern
 
 ```javascript
-// 1. First, confirm the working directory boundary
-await mcpClient.callTool("list_allowed_directories", {});
-// Returns: Working Directory Boundary: /Users/username/Projects/my-app
-
-// 2. Use relative paths from the working directory
+// 1. Use relative paths from the working directory
 await mcpClient.callTool("list_directory", {
-  path: "src"  // Relative to working directory
+  path: "src"
 });
 
-// 3. Or use absolute paths within the boundary
+// 2. Or use absolute paths within the boundary
 await mcpClient.callTool("read_file", {
   path: "/Users/username/Projects/my-app/src/index.ts"
 });
 
-// 4. Search within the project
+// 3. Search within the project
 await mcpClient.callTool("codebase_search", {
   query: "function handleAuth",
-  searchPath: "src"  // Relative path within boundary
+  searchPath: "src"
+});
+
+// 4. Run commands
+await mcpClient.callTool("run_terminal_command", {
+  command: "npm test"
 });
 ```
 

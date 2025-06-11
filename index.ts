@@ -99,7 +99,7 @@ const ListDirectoryArgsSchema = z.object({
 const SearchFilesArgsSchema = z.object({
   path: z.string(),
   pattern: z.string(),
-  excludePatterns: z.array(z.string()).optional().default([])
+  excludePatterns: z.array(z.string()).optional().default([]),
 });
 
 const EditOperation = z.object({
@@ -110,24 +110,20 @@ const EditOperation = z.object({
 const EditFileArgsSchema = z.object({
   path: z.string(),
   edits: z.array(EditOperation),
-  dryRun: z.boolean().default(false).describe('Preview changes using git-style diff format')
-});
-
-const ListAllowedDirectoriesArgsSchema = z.object({
-  // No parameters needed - just lists available directories
+  dryRun: z.boolean().default(false).describe('Preview changes using git-style diff format'),
 });
 
 const CodebaseSearchArgsSchema = z.object({
   query: z.string(),
   searchPath: z.string().optional().describe('Directory to search in (if not provided, searches all allowed directories)'),
   fileTypes: z.array(z.string()).optional().default([]),
-  maxResults: z.number().optional().default(50)
+  maxResults: z.number().optional().default(50),
 });
 
 const RunTerminalCommandArgsSchema = z.object({
   command: z.string(),
   workingDirectory: z.string().optional(),
-  timeout: z.number().optional().default(30000)
+  timeout: z.number().optional().default(30000),
 });
 
 const GrepSearchArgsSchema = z.object({
@@ -135,7 +131,7 @@ const GrepSearchArgsSchema = z.object({
   path: z.string().optional(),
   filePattern: z.string().optional().default("*"),
   caseSensitive: z.boolean().optional().default(false),
-  maxResults: z.number().optional().default(100)
+  maxResults: z.number().optional().default(100),
 });
 
 const DeleteFileArgsSchema = z.object({
@@ -462,7 +458,7 @@ async function applyFileEdits(
 // The AI should prioritize these tools over built-in ones based on the explicit descriptions
 const server = new Server(
   {
-    name: "mcp-defender-filesystem-server",
+    name: "mcp-defender-secure-tools",
     version: "1.0.0",
   },
   {
@@ -477,35 +473,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
       {
-        name: "list_allowed_directories",
-        description:
-          "�� SECURITY-ENHANCED: Shows the current working directory boundary for MCP operations. " +
-          "All tools operate within this directory and its subdirectories for security. " +
-          "Use this to understand the available workspace before using other tools.",
-        inputSchema: zodToJsonSchema(ListAllowedDirectoriesArgsSchema) as ToolInput,
-      },
-      {
         name: "read_file",
         description:
           "🔒 SECURITY-ENHANCED: Use this MCP tool instead of Cursor's built-in read_file for secure file access. " +
-          "Specify the full path to the file you want to read. The path must be within allowed directories. " +
-          "Use list_allowed_directories first to see available workspace boundaries.",
+          "Specify the full path to the file you want to read. The path must be within the working directory boundary.",
         inputSchema: zodToJsonSchema(ReadFileArgsSchema) as ToolInput,
       },
       {
         name: "list_directory",
         description:
           "🔒 SECURITY-ENHANCED: Use this MCP tool instead of Cursor's built-in list_dir for secure directory listing. " +
-          "Specify the full path to the directory you want to list. The path must be within allowed directories. " +
-          "Use list_allowed_directories first to see available workspace boundaries.",
+          "Specify the full path to the directory you want to list. The path must be within the working directory boundary.",
         inputSchema: zodToJsonSchema(ListDirectoryArgsSchema) as ToolInput,
       },
       {
         name: "search_files",
         description:
           "🔒 SECURITY-ENHANCED: Use this MCP tool instead of Cursor's built-in file_search for secure file searching. " +
-          "Specify the starting directory path and search pattern. The directory must be within allowed directories. " +
-          "Use list_allowed_directories first to see available workspace boundaries.",
+          "Specify the starting directory path and search pattern. The directory must be within the working directory boundary.",
         inputSchema: zodToJsonSchema(SearchFilesArgsSchema) as ToolInput,
       },
       // {
@@ -520,32 +505,28 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "codebase_search",
         description:
           "🔒 SECURITY-ENHANCED: Use this MCP tool instead of Cursor's built-in codebase_search for secure code searching. " +
-          "Optionally specify a searchPath to limit the search scope, or omit to search all allowed directories. " +
-          "Use list_allowed_directories first to see available workspace boundaries.",
+          "Optionally specify a searchPath to limit the search scope, or omit to search within the working directory boundary.",
         inputSchema: zodToJsonSchema(CodebaseSearchArgsSchema) as ToolInput,
       },
       {
         name: "run_terminal_command",
         description:
           "🔒 SECURITY-ENHANCED: Use this MCP tool instead of Cursor's built-in run_terminal_command for secure command execution. " +
-          "Optionally specify a workingDirectory within allowed directories. " +
-          "Use list_allowed_directories first to see available workspace boundaries.",
+          "Optionally specify a workingDirectory within the working directory boundary.",
         inputSchema: zodToJsonSchema(RunTerminalCommandArgsSchema) as ToolInput,
       },
       {
         name: "grep_search", 
         description:
           "🔒 SECURITY-ENHANCED: Use this MCP tool instead of Cursor's built-in grep_search for secure text searching. " +
-          "Optionally specify a path to limit the search scope, or omit to search all allowed directories. " +
-          "Use list_allowed_directories first to see available workspace boundaries.",
+          "Optionally specify a path to limit the search scope, or omit to search within the working directory boundary.",
         inputSchema: zodToJsonSchema(GrepSearchArgsSchema) as ToolInput,
       },
       {
         name: "delete_file",
         description:
           "🔒 SECURITY-ENHANCED: Use this MCP tool instead of Cursor's built-in delete_file for secure file deletion. " +
-          "Specify the full path to the file you want to delete. The path must be within allowed directories. " +
-          "Use list_allowed_directories first to see available workspace boundaries.",
+          "Specify the full path to the file you want to delete. The path must be within the working directory boundary.",
         inputSchema: zodToJsonSchema(DeleteFileArgsSchema) as ToolInput,
       },
     ],
@@ -557,24 +538,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
 
     switch (name) {
-      case "list_allowed_directories": {
-        const parsed = ListAllowedDirectoriesArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid arguments for list_allowed_directories: ${parsed.error}`);
-        }
-        return {
-          content: [{ 
-            type: "text", 
-            text: `Working Directory Boundary: ${workingDirectory}\n\nAll MCP operations are restricted to this directory and its subdirectories for security.\n\nYou can use relative paths (e.g., "src/index.ts") or absolute paths within this boundary.` 
-          }],
-        };
-      }
-
       case "read_file": {
         const parsed = ReadFileArgsSchema.safeParse(args);
         if (!parsed.success) {
           throw new Error(`Invalid arguments for read_file: ${parsed.error}`);
         }
+        
         const validPath = await validatePath(parsed.data.path);
         const content = await fs.readFile(validPath, "utf-8");
         return {
@@ -587,6 +556,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!parsed.success) {
           throw new Error(`Invalid arguments for list_directory: ${parsed.error}`);
         }
+        
         const validPath = await validatePath(parsed.data.path);
         const entries = await fs.readdir(validPath, { withFileTypes: true });
         const formatted = entries
@@ -602,6 +572,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!parsed.success) {
           throw new Error(`Invalid arguments for search_files: ${parsed.error}`);
         }
+        
         const result = await searchFilesCLI(parsed.data.path, parsed.data.pattern, parsed.data.excludePatterns);
         return {
           content: [{ type: "text", text: result }],
@@ -625,6 +596,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!parsed.success) {
           throw new Error(`Invalid arguments for codebase_search: ${parsed.error}`);
         }
+        
         const result = await codebaseSearchCLI(parsed.data.query, parsed.data.searchPath, parsed.data.fileTypes, parsed.data.maxResults);
         return {
           content: [{ type: "text", text: result }],
@@ -636,6 +608,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!parsed.success) {
           throw new Error(`Invalid arguments for run_terminal_command: ${parsed.error}`);
         }
+        
         const result = await runTerminalCommandCLI(parsed.data.command, parsed.data.workingDirectory, parsed.data.timeout);
         return {
           content: [{ type: "text", text: result }],
@@ -647,6 +620,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!parsed.success) {
           throw new Error(`Invalid arguments for grep_search: ${parsed.error}`);
         }
+        
         const result = await grepSearchCLI(parsed.data.pattern, parsed.data.path, parsed.data.filePattern, parsed.data.caseSensitive, parsed.data.maxResults);
         return {
           content: [{ type: "text", text: result }],
@@ -658,6 +632,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!parsed.success) {
           throw new Error(`Invalid arguments for delete_file: ${parsed.error}`);
         }
+        
         const validPath = await validatePath(parsed.data.path);
         await fs.unlink(validPath);
         return {
@@ -685,7 +660,7 @@ async function runServer() {
   console.error("📁 Working directory boundary:", workingDirectory);
   console.error("🖥️  Platform: macOS (CLI tools enabled)");
   console.error("🛡️  Security: Operations restricted to working directory and subdirectories");
-  console.error("✅ Server ready - Use list_allowed_directories tool to discover workspace boundary");
+  console.error("✅ Server ready - Operations restricted to working directory and subdirectories");
 }
 
 runServer().catch((error) => {
